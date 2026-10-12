@@ -168,6 +168,36 @@ Returns `{ "agentId", "activity": ActivityRecord[] }`.
 Single activity record (owner-scoped). `404` if not found/not owned.
 Returns `{ "activity": ActivityRecord }`.
 
+### GET /activity
+
+List activity records across all agents owned by the authenticated
+principal. Results are owner-scoped, so records belonging to other owners
+are not returned.
+
+Query: `?limit=` (default 50, clamped 1–100).
+Returns `{ "activity": ActivityRecord[] }`.
+
+### GET /agents/:id/spending
+
+Get the current day's spending for an agent owned by the authenticated
+principal. The response includes one entry for each asset in the agent's
+`dailySpendingLimit` policy. Results are owner-scoped.
+
+Returns `{ "agentId": string, "spending": Record<asset, {
+"used": number, "limit": string, "remaining": number }> }`.
+`used` is the amount reserved today, and `remaining` is the non-negative
+amount left under the configured daily limit.
+
+### GET /overview/attention
+
+Get owner-scoped dashboard counters for the authenticated principal. The
+response includes pending approvals and execution-queue states across all
+of the owner's agents.
+
+Returns `{ "pendingApprovals": number, "failedExecutions": number,
+"deadLetterExecutions": number, "retryingExecutions": number,
+"stuckExecutions": number }`.
+
 ---
 
 ## Policy
