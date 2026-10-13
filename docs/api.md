@@ -335,10 +335,26 @@ restart, and the SQLite file cannot be reliably shared between instances.
 
 `apps/api/src/server.ts` starts, in-process:
 
-- an **execution queue** (polls for due executions every 10s, with retry and
-  dead-letter semantics), and
-- a **transaction status reconciler** (polls Horizon every 30s for submitted
-  transactions).
+- an **execution queue** (polls for due executions every 10s by default, with
+  retry and dead-letter semantics),
+- a **transaction status reconciler** (polls Horizon every 30s by default for
+  submitted transactions), and
+- an **agent scheduler** (checks for due schedules every 60s by default).
+
+The cadence of each worker can be changed without editing source code:
+
+| Worker | Environment variable | Default |
+| --- | --- | ---: |
+| Execution queue | `EXECUTION_QUEUE_INTERVAL_MS` | `10000` ms |
+| Transaction reconciler | `RECONCILIATION_INTERVAL_MS` | `30000` ms |
+| Agent scheduler | `SCHEDULER_INTERVAL_MS` | `60000` ms |
+
+Each value must be a positive integer number of milliseconds. The queue and
+reconciler can contact Horizon during normal processing, so shorter intervals
+increase external API load. A shorter scheduler interval increases database and
+execution-pipeline activity. The server entry point starts all three workers;
+it has no environment switch to disable one of them. Embedded callers can
+disable a worker through the corresponding `createApiServer()` option.
 
 Startup also runs `ExecutionRecoveryService.recover()` to re-queue records left
 in `executing` by an unclean shutdown. These timers require a process that stays

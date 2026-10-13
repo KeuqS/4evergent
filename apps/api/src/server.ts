@@ -12,6 +12,9 @@
  *   HOST                        — Bind host (default: 127.0.0.1; set 0.0.0.0 in a container)
  *   DATABASE_PATH               — SQLite file path (optional, in-memory if unset)
  *   DEV_OWNER_ID                — Development owner identity (default: "operator")
+ *   RECONCILIATION_INTERVAL_MS  — Reconciler cadence (default: 30000)
+ *   EXECUTION_QUEUE_INTERVAL_MS — Execution queue cadence (default: 10000)
+ *   SCHEDULER_INTERVAL_MS        — Scheduler cadence (default: 60000)
  *
  * LIVE_SUBMIT must be explicitly set to "1" to enable real Testnet submission.
  *
@@ -34,6 +37,42 @@ import { DevAuthProvider, ProductionApiKeyAuthProvider } from "@4evergent/shared
 import { createAuthModule } from "./auth.js";
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+
+export type WorkerIntervals = {
+  reconciliation?: number;
+  executionQueue?: number;
+  scheduler?: number;
+};
+
+/** Parse an optional positive millisecond interval without silently falling back. */
+export function parsePositiveInterval(name: string, value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer number of milliseconds (got: ${JSON.stringify(value)})`);
+  }
+  return parsed;
+}
+
+/** Read the background-worker cadence settings used by the server entry point. */
+export function parseWorkerIntervals(env: Record<string, string | undefined>): WorkerIntervals {
+  return {
+    reconciliation: parsePositiveInterval("RECONCILIATION_INTERVAL_MS", env.RECONCILIATION_INTERVAL_MS),
+    executionQueue: parsePositiveInterval("EXECUTION_QUEUE_INTERVAL_MS", env.EXECUTION_QUEUE_INTERVAL_MS),
+    scheduler: parsePositiveInterval("SCHEDULER_INTERVAL_MS", env.SCHEDULER_INTERVAL_MS),
+  };
+}
+
+/** Build the worker options passed to createApiServer(). */
+export function getWorkerOptions(env: Record<string, string | undefined> = process.env) {
+  const intervals = parseWorkerIntervals(env);
+  return {
+    scheduler: { enabled: true, intervalMs: intervals.scheduler },
+    executionQueue: { enabled: true, intervalMs: intervals.executionQueue },
+    reconciliation: { enabled: true, intervalMs: intervals.reconciliation },
+  };
+}
 
 function parseApiKeys(envVar: string | undefined): Record<string, { ownerId: string; subject: string }> {
   if (!envVar) return {};
@@ -105,6 +144,14 @@ async function main() {
   const host = process.env.HOST || "127.0.0.1";
   const dbPath = process.env.DATABASE_PATH || undefined;
   const devOwnerId = process.env.DEV_OWNER_ID || "operator";
+  let workerOptions: ReturnType<typeof getWorkerOptions>;
+
+  try {
+    workerOptions = getWorkerOptions(process.env);
+  } catch (err: any) {
+    console.error(`FATAL: ${err.message}`);
+    process.exit(1);
+  }
 
   // Validate network configuration at startup
   if (!horizonUrl.includes("testnet")) {
@@ -192,8 +239,7 @@ async function main() {
       horizonUrl,
       signer,
       dbPath,
-      executionQueue: { enabled: true },
-      reconciliation: { enabled: true },
+      ...workerOptions,
       authProvider,
       authModule,
       corsOrigin: webOrigin,
