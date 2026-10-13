@@ -34,6 +34,87 @@ import { DevAuthProvider, ProductionApiKeyAuthProvider } from "@4evergent/shared
 import { createAuthModule } from "./auth.js";
 
 const TESTNET_PASSPHRASE = "Test SDF Network ; September 2015";
+export const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 10_000;
+
+export type ShutdownServer = { close: () => Promise<void> };
+
+type ShutdownRuntime = {
+  exit: (code: number) => void;
+  setTimeout: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (timer: ReturnType<typeof setTimeout>) => void;
+  log: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+};
+
+/**
+ * Build an idempotent signal handler for the API's existing close lifecycle.
+ * The injected runtime keeps the drain and timeout paths directly testable.
+ */
+export function createShutdownHandler(
+  server: ShutdownServer,
+  runtime: Partial<ShutdownRuntime> = {},
+  drainTimeoutMs = DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
+): (signal: string) => Promise<void> {
+  const actualRuntime: ShutdownRuntime = {
+    exit: (code) => process.exit(code),
+    setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+    clearTimeout: (timer) => clearTimeout(timer),
+    log: (...args) => console.log(...args),
+    error: (...args) => console.error(...args),
+    ...runtime,
+  };
+  let shuttingDown = false;
+
+  return async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    actualRuntime.log(`[4evergent] ${signal} received — shutting down`);
+
+    let exitRequested = false;
+    const drainTimer = actualRuntime.setTimeout(() => {
+      exitRequested = true;
+      actualRuntime.error(
+        `[4evergent] shutdown drain exceeded ${drainTimeoutMs} ms — forcing exit`,
+      );
+      actualRuntime.exit(1);
+    }, drainTimeoutMs);
+
+    try {
+      await server.close();
+      if (!exitRequested) actualRuntime.exit(0);
+    } catch (err) {
+      if (!exitRequested) {
+        actualRuntime.error("[4evergent] graceful shutdown failed:", err);
+        actualRuntime.exit(1);
+      }
+    } finally {
+      actualRuntime.clearTimeout(drainTimer);
+    }
+  };
+}
+
+/** Register both container and local-terminal shutdown signals. */
+type ShutdownSignalSource = {
+  once: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
+  off: (signal: "SIGTERM" | "SIGINT", listener: () => void) => void;
+};
+
+export function installShutdownHandlers(
+  server: ShutdownServer,
+  runtime: Partial<ShutdownRuntime> = {},
+  signalSource: ShutdownSignalSource = process,
+): () => void {
+  const shutdown = createShutdownHandler(server, runtime);
+  const onSigterm = () => void shutdown("SIGTERM");
+  const onSigint = () => void shutdown("SIGINT");
+  signalSource.once("SIGTERM", onSigterm);
+  signalSource.once("SIGINT", onSigint);
+
+  return () => {
+    signalSource.off("SIGTERM", onSigterm);
+    signalSource.off("SIGINT", onSigint);
+  };
+}
 
 function parseApiKeys(envVar: string | undefined): Record<string, { ownerId: string; subject: string }> {
   if (!envVar) return {};
@@ -186,8 +267,9 @@ async function main() {
   console.log(`[4evergent] Database: ${dbPath ?? "in-memory"}`);
   console.log(`[4evergent] Live submission: ${process.env.LIVE_SUBMIT === "1" ? "ENABLED" : "disabled"}`);
 
+  let server: Awaited<ReturnType<typeof createApiServer>> | undefined;
   try {
-    const server = await createApiServer({
+    server = await createApiServer({
       port,
       horizonUrl,
       signer,
@@ -201,7 +283,13 @@ async function main() {
 
     await server.listen(port, host);
     console.log(`[4evergent] Server listening on http://${host}:${port}`);
+    installShutdownHandlers(server);
   } catch (err: any) {
+    if (server) {
+      await server.close().catch((closeErr: unknown) => {
+        console.error("[4evergent] failed to close after startup error:", closeErr);
+      });
+    }
     console.error(`FATAL: ${err.message}`);
     process.exit(1);
   }

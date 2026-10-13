@@ -343,9 +343,12 @@ restart, and the SQLite file cannot be reliably shared between instances.
 Startup also runs `ExecutionRecoveryService.recover()` to re-queue records left
 in `executing` by an unclean shutdown. These timers require a process that stays
 alive; a platform that freezes or suspends idle processes will delay execution
-and reconciliation. Note also that the process has no `SIGTERM`/`SIGINT` handler,
-so a platform that stops hard on shutdown can interrupt in-flight work — the
-startup recovery pass is what repairs that on the next boot.
+and reconciliation. The production entry point handles `SIGTERM` and `SIGINT`
+by awaiting the server's close lifecycle, which stops both workers before
+exiting with status 0. Shutdown is idempotent: a second signal does not start
+another close sequence. The drain is bounded to 10 seconds; if it is still
+blocked after that time, the process forces a non-zero exit so a container
+orchestrator is not left waiting indefinitely.
 
 ### Not supported: serverless and scale-to-zero
 
