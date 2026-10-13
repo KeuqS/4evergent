@@ -21,11 +21,35 @@ npx tsx apps/cli/src/cli.ts health
 |---|---|---|
 | `FOREGENT_API_URL` | `http://127.0.0.1:3000` | API base URL |
 | `FOREGENT_API_KEY` | - | Bearer API key (production auth mode) |
+| `FOREGENT_API_TIMEOUT_MS` | `30000` | Maximum time in milliseconds to wait for one API response |
 
 ```bash
 export FOREGENT_API_URL=http://localhost:3000
 export FOREGENT_API_KEY=your-api-key-here
+# Optional: override the 30-second request deadline
+export FOREGENT_API_TIMEOUT_MS=10000
 ```
+
+### Request timeout and network errors
+
+Every CLI command uses the same request helper, so every API call has a
+deadline. The default is 30,000 milliseconds (30 seconds). Set the positive
+integer `FOREGENT_API_TIMEOUT_MS` environment variable to use a different
+deadline for a run. The timeout bounds the HTTP request only; it does not
+terminate a command that has already received a response and the CLI never
+retries automatically.
+
+Timeouts are reported separately from connection failures and HTTP responses:
+
+| Situation | stderr | Exit code |
+|---|---|---|
+| API is unreachable (`ECONNREFUSED` / `ENOTFOUND`) | `Cannot connect to API at ...` | `1` |
+| API responds with HTTP 4xx/5xx | `HTTP <status>: ...` | `1` |
+| API does not respond before the deadline | `Request timed out after <milliseconds> ms` | `2` |
+
+For intent submissions, a timeout leaves the request outcome unknown: the
+server may have received it before the client stopped waiting. Use the same
+`--idempotency-key` when retrying, as described in [Idempotency](#idempotency).
 
 ## Commands
 
@@ -105,9 +129,10 @@ submits twice silently.
 
 ## Output
 
-Default output is human-readable. Every command exits `0` on success,
-non-zero on failure (network error, HTTP 4xx/5xx). The `--json` flag is
-not yet supported — planned for a future CLI phase.
+Default output is human-readable. Every command exits `0` on success, `1` on
+failure (usage, network error, or HTTP 4xx/5xx), and `2` when the request
+deadline expires. The `--json` flag is not yet supported — planned for a
+future CLI phase.
 
 ## Security
 

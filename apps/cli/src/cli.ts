@@ -14,12 +14,32 @@ import { exit } from "node:process";
 
 const API_URL = process.env.FOREGENT_API_URL ?? "http://127.0.0.1:3000";
 const API_KEY = process.env.FOREGENT_API_KEY;
+const DEFAULT_API_TIMEOUT_MS = 30_000;
+const TIMEOUT_EXIT_CODE = 2;
+
+function parseTimeoutMs(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_API_TIMEOUT_MS;
+}
+
+const API_TIMEOUT_MS = parseTimeoutMs(process.env.FOREGENT_API_TIMEOUT_MS);
 
 class ApiError extends Error {
   constructor(public status: number, message: string) {
     super(`HTTP ${status}: ${message}`);
     this.name = "ApiError";
   }
+}
+
+class ApiTimeoutError extends Error {
+  constructor(public timeoutMs: number) {
+    super("Request timed out after " + timeoutMs + " ms");
+    this.name = "ApiTimeoutError";
+  }
+}
+
+function exitCodeForError(err: unknown): number {
+  return err instanceof ApiTimeoutError ? TIMEOUT_EXIT_CODE : 1;
 }
 
 interface ApiResponse {
@@ -37,12 +57,17 @@ async function request(path: string, init: RequestInit = {}): Promise<ApiRespons
   }
 
   let res: Response;
+  const signal = init.signal ?? AbortSignal.timeout(API_TIMEOUT_MS);
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...init,
+      signal,
       headers,
     });
   } catch (err: any) {
+    if (signal.aborted && signal.reason?.name === "TimeoutError") {
+      throw new ApiTimeoutError(API_TIMEOUT_MS);
+    }
     if (err.cause?.code === "ECONNREFUSED" || err.cause?.code === "ENOTFOUND" || err.code === "ECONNREFUSED") {
       throw new ApiError(0, `Cannot connect to API at ${API_URL}. Is the server running?`);
     }
@@ -116,7 +141,7 @@ async function cmdHealth() {
     return 0;
   } catch (err: any) {
     console.error(`Health check failed: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -133,7 +158,7 @@ async function cmdAgentList() {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -148,7 +173,7 @@ async function cmdAgentGet(agentId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -167,7 +192,7 @@ async function cmdAgentStatus(agentId: string, status: "active" | "paused" | "di
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -185,7 +210,7 @@ async function cmdApprovalList() {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -205,7 +230,7 @@ async function cmdApprovalAction(approvalId: string, action: "approve" | "reject
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -226,7 +251,7 @@ async function cmdExecutionList() {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -241,7 +266,7 @@ async function cmdExecutionGet(executionId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -260,7 +285,7 @@ async function cmdExecutionRetry(executionId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -279,7 +304,7 @@ async function cmdExecutionCancel(executionId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -414,7 +439,7 @@ async function cmdPolicyGet(agentId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -442,7 +467,7 @@ async function cmdActivityList(agentId: string, limit: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -470,7 +495,7 @@ async function cmdScheduleList(agentId: string, limit: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -485,7 +510,7 @@ async function cmdScheduleGet(agentId: string, scheduleId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -541,7 +566,7 @@ async function cmdIntentSubmit(agentId: string, args: string[], idempotencyKey: 
     } else {
       console.error(`Error: ${err.message}`);
     }
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -581,7 +606,7 @@ async function cmdAgentCreate(args: string[]) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -613,7 +638,7 @@ async function cmdPolicyUpdate(agentId: string, args: string[]) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -647,7 +672,7 @@ async function cmdScheduleCreate(agentId: string, args: string[]) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -669,7 +694,7 @@ async function cmdScheduleUpdate(agentId: string, args: string[]) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -688,7 +713,7 @@ async function cmdSchedulePause(agentId: string, scheduleId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -707,7 +732,7 @@ async function cmdScheduleResume(agentId: string, scheduleId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -726,7 +751,7 @@ async function cmdScheduleDisable(agentId: string, scheduleId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 
@@ -743,7 +768,7 @@ async function cmdScheduleDelete(agentId: string, scheduleId: string) {
     return 0;
   } catch (err: any) {
     console.error(`Error: ${err.message}`);
-    return 1;
+    return exitCodeForError(err);
   }
 }
 

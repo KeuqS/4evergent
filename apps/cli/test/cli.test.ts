@@ -22,19 +22,49 @@ interface RunResult {
 
 function run(
   args: string[],
-  opts: { env?: Record<string, string>; responses?: Array<{ match: string; status: number; body: any }>; networkFail?: boolean } = {}
+  opts: {
+    env?: Record<string, string>;
+    responses?: Array<{ match: string; status: number; body: any }>;
+    networkFail?: boolean;
+    neverRespond?: boolean;
+    assertTimeoutMs?: number;
+  } = {}
 ): RunResult {
   const responses = opts.responses ?? [];
+  const timeoutProbe =
+    opts.assertTimeoutMs === undefined
+      ? ""
+      : `
+    const realAbortSignalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = (ms) => {
+      if (ms !== ${opts.assertTimeoutMs}) throw new Error("unexpected request timeout");
+      return realAbortSignalTimeout(ms);
+    };
+  `;
   // Inline mock server: intercepts fetch inside the child process before CLI runs.
   const prelude = opts.networkFail
     ? `
+    ${timeoutProbe}
     globalThis.fetch = async () => {
       const err = new Error("connect ECONNREFUSED 127.0.0.1:9");
       (err as any).code = "ECONNREFUSED";
       throw err;
     };
   `
+    : opts.neverRespond
+    ? `
+    ${timeoutProbe}
+    globalThis.fetch = async (_url, init) =>
+      new Promise((_, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
+          { once: true }
+        );
+      });
+  `
     : `
+    ${timeoutProbe}
     const responses = ${JSON.stringify(responses)};
     const realFetch = globalThis.fetch;
     globalThis.fetch = async (url, init) => {
@@ -77,6 +107,7 @@ function run(
 
 test("CLI: health success → exit 0, prints status", () => {
   const r = run(["health"], {
+    assertTimeoutMs: 30000,
     responses: [{ match: "/health", status: 200, body: { status: "ok", signerAccountId: "GBDMPFEAZOQW7XVTAVPXBT7PPA4ZZW7ZFJW5KJNBYRPJ35H6ASW4ASE3" } }],
   });
   assert.equal(r.code, 0);
@@ -90,6 +121,15 @@ test("CLI: health failure (network error) → exit non-zero", () => {
   });
   assert.notEqual(r.code, 0);
   assert.match(r.stderr, /Health check failed|Cannot connect/);
+});
+
+test("CLI: unresponsive server → timeout message and exit code", () => {
+  const r = run(["health"], {
+    env: { FOREGENT_API_TIMEOUT_MS: "20" },
+    neverRespond: true,
+  });
+  assert.equal(r.code, 2, `${r.stdout}\n${r.stderr}`);
+  assert.match(r.stderr, /Request timed out after 20 ms/);
 });
 
 test("CLI: agent list → prints agents", () => {
