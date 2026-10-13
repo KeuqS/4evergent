@@ -27,6 +27,9 @@ pnpm build
 > `TS2307: Cannot find module '@4evergent/shared'`. The same ordering is used in
 > CI (`Build` runs before `Typecheck`).
 
+For related API startup and configuration failures, see the [API server
+troubleshooting guide](docs/troubleshooting.md).
+
 ## Repository structure
 
 ```

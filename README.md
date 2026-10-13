@@ -126,6 +126,9 @@ pnpm build
 pnpm test
 ```
 
+If the API exits during startup or is unreachable after deployment, see the
+[API server troubleshooting guide](docs/troubleshooting.md).
+
 ### Prerequisites
 
 - **Node.js >= 22** (required for `node:sqlite` built-in module)
@@ -174,7 +177,7 @@ export STELLAR_HORIZON_URL=https://horizon-testnet.stellar.org
 #   curl "https://friendbot.stellar.org?addr=<PUBLIC_KEY>"
 ```
 
-The MVP is validated against the testnet Horizon API. See [docs/testnet.md](docs/testnet.md) for details.
+The MVP is validated against the testnet Horizon API. See [docs/testnet.md](docs/testnet.md) for details, and the [API server troubleshooting guide](docs/troubleshooting.md) for startup and configuration failures.
 
 ## Adding a new agent capability
 
