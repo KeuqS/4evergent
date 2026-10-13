@@ -17,10 +17,13 @@ const SUPPORTED_TX_TYPES = ["payment", "trustline", "contract_call", "account_se
  * Validates a policy configuration object.
  *
  * Rules:
- * - Numeric values must be finite and non-negative
- * - maxTxAmount values must be positive where present
- * - dailySpendingLimit values must be positive where present
- * - approvalThreshold must be positive if provided
+ * - Numeric values must be finite.
+ * - maxTxAmount values must be strictly positive where present; zero cannot be
+ *   used as a per-transaction maximum.
+ * - dailySpendingLimit values must be non-negative where present; zero
+ *   intentionally blocks all spending for that asset.
+ * - approvalThreshold and requireHumanApprovalForAmountAbove are non-negative
+ *   when provided; zero requires approval for every positive amount.
  * - allowedAssets must be non-empty strings
  * - allowedDestinations must be valid Stellar addresses (G...) if present
  * - allowedContractIds must be non-empty strings if present
@@ -62,6 +65,7 @@ export function validatePolicyRules(rules: any): PolicyValidationResult {
           errors.push(`dailySpendingLimit.${asset} must be a string or number`);
         } else {
           const num = parseFloat(String(limit));
+          // A zero daily limit intentionally blocks all spending for that asset.
           if (!isFinite(num) || num < 0) {
             errors.push(`dailySpendingLimit.${asset} must be a non-negative number, got ${limit}`);
           }
